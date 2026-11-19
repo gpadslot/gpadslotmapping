@@ -914,6 +914,7 @@
               <label>Service setting <select id="bSetting"></select></label>
               <label>Context type <select id="bContext"></select></label>
               <label>National category <select id="bCategory"></select></label>
+              <p class="tgl-note" id="ctxNote"></p>
               <div class="toggles">
                 <label class="tgl"><input type="checkbox" id="bBookable" checked> Bookable</label>
                 <label class="tgl"><input type="checkbox" id="bDna" checked> Allow auto DNA</label>
@@ -1284,11 +1285,11 @@
     {
       key:"cra", color:"#0096D1",
       name:"Care related activity",
-      desc:"About the patient, but doesn't involve them directly: clinical tasks carried out on their behalf. These are not appointments and don't count in the national figures, but the slot can be bookable if a patient is booked into it.",
+      desc:"About the patient, but doesn't involve them directly: clinical tasks carried out on their behalf. This is not an appointment. If the practice wants to record admin done on patients, the slot can be bookable, but it still isn't counted as an appointment.",
       cats:[
         {name:"Care related activity but does not fit into any other category", desc:"Genuine clinical work related to a patient that doesn't involve them and doesn't match either category below."},
         {name:"Multidisciplinary team meeting / patient collaboration planning", desc:"A meeting of several healthcare professionals discussing named patients, without those patients present.", examples:"Safeguarding meetings, palliative care planning"},
-        {name:"Patient clinical admin", desc:"Clinical admin carried out by a single healthcare professional on a patient's behalf, not in front of them. It isn't an appointment and doesn't count, but the slot can be bookable if a patient is booked into it. This shouldn't include clinical triage of online consultations, which belongs under Clinical Triage instead.", examples:"Writing referral letters, signing repeat prescriptions, reviewing results"}
+        {name:"Patient clinical admin", desc:"Clinical admin carried out by a single healthcare professional on a patient's behalf, not in front of them. It isn't an appointment. If the practice wants to record admin done on patients, the slot can be bookable, but it still isn't counted as an appointment. This shouldn't include clinical triage of online consultations, which belongs under Clinical Triage instead.", examples:"Writing referral letters, signing repeat prescriptions, reviewing results"}
       ]
     },
     {
@@ -1428,7 +1429,7 @@
   }
 
   function countsBadge(counts){
-    if(counts === "bookable") return '<span class="badge maybe">&#8856; Not an appointment, but can be bookable if a patient is booked in</span>';
+    if(counts === "bookable") return '<span class="badge maybe">&#8856; Not an appointment. Can be bookable to record admin done on patients, but not counted</span>';
     return counts
       ? '<span class="badge yes">&#10003; Counts as an appointment</span>'
       : '<span class="badge no">&#8856; Not counted as an appointment</span>';
@@ -1483,7 +1484,7 @@
   });
   summary.innerHTML = "<strong>" + counted + " of " + slots.length +
     "</strong> slots this morning always count as appointments in the national figures. " +
-    (maybe ? "<strong>" + maybe + "</strong> more are care related activity: not appointments, but they can be bookable if a patient is booked in. " : "") +
+    (maybe ? "<strong>" + maybe + "</strong> more are care related activity: not appointments. They can be bookable if the practice wants to record admin done on patients, but they still aren't counted. " : "") +
     "The rest is still real work, just recorded differently.";
 
   function showSlot(i){
@@ -1542,9 +1543,39 @@
   }
   function fillCategories(){ fillSelect(bCategory, taxGroups[bContext.value].cats); }
 
+  // Which context types each status type can go with.
+  // A patient in front of you or on the phone is an encounter; written work and
+  // non-appointments are activity done on the patient's behalf, or practice time.
+  var modeContexts = {
+    "Face to Face (Surgery)": ["cre"],
+    "Telephone/Audio": ["cre"],
+    "Face to Face (Home visit)": ["cre"],
+    "Written (including online)": ["cra", "apsa"],
+    "Not an appointment": ["cra", "apsa"]
+  };
+  var ctxNote = document.getElementById("ctxNote");
+
+  function fillContexts(){
+    var status = taxStatusTypes[bStatus.value];
+    var allowed = modeContexts[status.name] || ["cre", "cra", "apsa"];
+    var prev = bContext.value;
+    bContext.innerHTML = "";
+    taxGroups.forEach(function(g, i){
+      if(allowed.indexOf(g.key) === -1) return;
+      var o = el("option", null, g.name);
+      o.value = i;
+      bContext.appendChild(o);
+    });
+    var stillThere = Array.prototype.some.call(bContext.options, function(o){ return o.value === prev; });
+    bContext.value = stillThere ? prev : bContext.options[0].value;
+    var names = allowed.map(function(k){ return groupStyle[k].label; });
+    ctxNote.textContent = "“" + status.name + "” can only be recorded as " + names.join(" or ") + ".";
+    return !stillThere;
+  }
+
   fillSelect(bStatus, taxStatusTypes);
   fillSelect(bSetting, taxServiceSettings);
-  fillSelect(bContext, taxGroups);
+  fillContexts();
   bContext.value = 0;
   fillCategories();
   taxGroups[0].cats.forEach(function(c, i){ if(c.name === "General consultation routine") bCategory.value = i; });
@@ -1578,7 +1609,7 @@
     } else if(group.key === "cre"){
       verdictText.textContent = "The patient is directly involved, so this care related encounter counts as an appointment in the national figures.";
     } else if(group.key === "cra"){
-      verdictText.textContent = "This is clinical work done on the patient's behalf, such as referrals, results or prescriptions. It isn't an appointment, so it doesn't count in the national figures, but the slot can be bookable if a patient is booked into it.";
+      verdictText.textContent = "This is clinical work done on the patient's behalf, such as referrals, results or prescriptions. It isn't an appointment. If the practice wants to record admin done on patients, the slot can be bookable, but it still isn't counted as an appointment.";
     } else {
       verdictText.textContent = "This is about running the practice rather than a patient's care, so it's recorded as admin and staff activity and not counted as an appointment.";
     }
@@ -1607,13 +1638,10 @@
       why = "This is practice or staff time with no patient in it, so it isn't bookable and there's no attendance to mark as DNA.";
     } else if(group.key === "cra"){
       book = true; dna = false;
-      why = "Not an appointment, but it can be bookable so a patient can be booked into the slot and the work done on their behalf is recorded against them. Auto DNA is off: the patient never arrives, so with it on, EMIS would cross them out as Did Not Attend once the slot time passes.";
+      why = "Not an appointment. It can be bookable if the practice wants to record admin done on patients, but it still isn't counted as an appointment. Auto DNA is off: the patient never arrives, so with it on, EMIS would cross them out as Did Not Attend once the slot time passes.";
     } else if(noBookCats[cat.name]){
       book = false; dna = !!dnaOnCats[cat.name];
       why = noBookCats[cat.name];
-    } else if(status.name === "Written (including online)"){
-      book = true; dna = false;
-      why = "Written and online slots are booked with the patient in them, for example to reply to an online consultation, so they're bookable. Auto DNA is off: the patient never arrives, so with it on, EMIS would cross them out as Did Not Attend once the slot time passes.";
     } else if(status.name === "Face to Face (Home visit)"){
       book = false; dna = false;
       why = "Home visits are arranged by the practice, and the clinician goes to the patient, so auto DNA doesn't apply.";
@@ -1626,7 +1654,8 @@
   }
 
   [bBookable, bDna].forEach(function(c){ c.addEventListener("change", updateTicket); });
-  [bStatus, bSetting, bCategory].forEach(function(c){ c.addEventListener("change", function(){ applySlotRules(); updateTicket(); }); });
+  bStatus.addEventListener("change", function(){ if(fillContexts()) fillCategories(); applySlotRules(); updateTicket(); });
+  [bSetting, bCategory].forEach(function(c){ c.addEventListener("change", function(){ applySlotRules(); updateTicket(); }); });
   bContext.addEventListener("change", function(){ fillCategories(); applySlotRules(); updateTicket(); });
   applySlotRules();
   updateTicket();
@@ -1878,7 +1907,7 @@
      why:"A new problem that needs to be seen the same day is an acute consultation."},
     {s:"Between clinics, a GP signs a batch of repeat prescriptions and actions hospital letters.",
      a:"Patient clinical admin", o:["Clinical housekeeping/admin", "General consultation routine", "Business/practice management activities"],
-     why:"It's clinical work for named patients, done without them present, so it's Patient clinical admin. It isn't an appointment and doesn't count, but the slot can be bookable if a patient is booked into it."},
+     why:"It's clinical work for named patients, done without them present, so it's Patient clinical admin. It isn't an appointment. If the practice wants to record admin done on patients, the slot can be bookable, but it still isn't counted as an appointment."},
     {s:"The nurse's session is fully booked, so an extra slot is squeezed in for a patient whose condition is getting worse.",
      a:"Unplanned clinical activity", o:["General consultation acute", "Walk-in", "Home visit"],
      why:"An extra slot added to an already-planned session to cope with same-day demand is Unplanned clinical activity."},
@@ -1887,7 +1916,7 @@
      why:"A specific procedure booked in advance for a known intervention is a Planned clinical procedure. Blood tests are a typical example."},
     {s:"The practice team meets to discuss safeguarding concerns about several named patients. The patients aren't there.",
      a:"Multidisciplinary team meeting / patient collaboration planning", o:["Business/practice management activities", "Planned clinic", "Patient clinical admin"],
-     why:"Several professionals discussing named patients without them present is a multidisciplinary team meeting. It's care related activity, so it isn't an appointment, but the slot can be bookable if a patient is booked into it."},
+     why:"Several professionals discussing named patients without them present is a multidisciplinary team meeting. It's care related activity, so it isn't an appointment. If the practice wants to record admin done on patients, the slot can be bookable, but it still isn't counted as an appointment."},
     {s:"A nurse spends 15 minutes checking the vaccine fridge temperatures and cleaning down the treatment room.",
      a:"Clinical housekeeping/admin", o:["Patient clinical admin", "Planned clinical procedure", "Break and staff absence"],
      why:"Clinical upkeep that isn't about any one patient is Clinical housekeeping/admin, under administration and practice staff activities."},
